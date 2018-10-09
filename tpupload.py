@@ -17,14 +17,43 @@
 #  59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
 """
+Utility to transfer data from UZH resources to ETH LeoMed.
+Procedure:
+- Within the scope of TumorProfiler, each new dataset to be uploaded should provide one or more list of files that will be uploaded.
+- Each file should contain only the content of a single folder from the TumorProfiler agreed: 'raw', 'derived', 'vsrs'
+- File name convention: [method]__[folder].txt
+Example: IMC__derived.txt
+.All_Cells_I.csv
+.All_Experiment_I.csv
+.All_Image_I.csv
+...
+
+- Run `tpupload` providing one or more files as above (named 'filters')
+- `tpupload` will:
+- parse filters filename to derive what folder the filter refers to ('raw', 'derived', 'vsrs')
+- read the content of each filter and find the corresponding file in the corresponding folder
+- creates a tempdir and makes symlinks for each file
+- if run in dryrun mode, simply logs the rsync command to run afterwards
+- else, try to run the rsync command directly
+
+Usage:
+tpupload [-h] [-d] [-n VPN] [-i IDENTITY] [-e SERVERNAME] [-v]
+                source destination [filters [filters ...]]
+
+example usage:
+$ tpupload /data/IMC/PoC/PoC_4 /cluster/work/tumorp/dropbox/imc/USZ-M-9/PZT-MOHUA-2/ ./IMC__derived.txt ./IMC__raw.txt ./IMC__vsrs.txt ./USZ-M-9.MOHUA-TS.I__raw_files.txt
+
+Assumptions:
+1. VPN connection to ETH should already be established
+2. user running the script should already have an account to LeoMed and have verified the 2-factor authentication as well as have the right ssh-key being deployed on LeoMed
+3. user running the script should have the private ssh-key deployed on the ScienceCloud node where the script will be running
+4. user running the script should already have ssh configuration to connect to LeoMed (via the jump-host) 
+
 """
 
 import sys
 import os
-import re
 import argparse
-import shutil
-import subprocess
 import tempfile
 
 import sh
@@ -36,14 +65,11 @@ log.propagate = True
 
 
 # Defaults
-vpn="ethz"
 dryrun=0
 ssh_identity="~/.ssh/id_rsa"
 tp_server_name="leomed"
 
 # Utility methods
-run_vpn="sudo vpnc-connect {vpn}"
-raw_folder_name = "raw"
 
 def generate_rsync_list(files_to_upload):
     """
@@ -71,23 +97,6 @@ def generate_rsync_list(files_to_upload):
                                                                             osx))
                 pass
     return (dirpath,md.name)
-
-    
-def runcmd(command):
-    """
-    Run a system command.
-    return exitcode
-    """
-    log.debug("running {0}... ".format(command))
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        close_fds=True, shell=True)
-    stdout, stderr = process.communicate()
-    exitcode = process.returncode
-
-    return (exitcode,stdout,stderr)
 
 def get_checksum(fname):
     import hashlib
@@ -134,7 +143,7 @@ def get_files(source, filter):
     # filter_list should be empty by now.
     return found, filter_list
     
-def main(source, destination, filters, vpn, ssh_identity, tp_server_name, dryrun):
+def main(source, destination, filters, ssh_identity, tp_server_name, dryrun):
     """
     Run the main workflow:
     * Building map of source files to be uploaded by reading input .txt files from `filters`
@@ -153,13 +162,15 @@ def main(source, destination, filters, vpn, ssh_identity, tp_server_name, dryrun
         found,missing = get_files(source, filter)
         # If `missing` is not empty, something went wrong. Stop here
         assert len(missing) == 0, "Files {0} not found when reading {1}".format(missing,
-                                                                                    filter)
+                                                                                filter)
         files_to_upload += found
 
     dir_location,checksum_file = generate_rsync_list(files_to_upload)
 
     if dryrun:
-        log.info("running rsync on {0}.".format(dir_location))
+        log.info("DBG: rsync -rt --copy-links -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' --progress {0}/ {1}:{2}.".format(dir_location,
+                                                                                                                                                    tp_server_name,
+                                                                                                                                                    destination))
     else:
         try:
             sh.rsync("-rt","--copy-links","-e","ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
@@ -171,7 +182,6 @@ def main(source, destination, filters, vpn, ssh_identity, tp_server_name, dryrun
             log.error("Failed running rsync. Error {0}".format(ex))
     
     log.info("Done")
-        
 
 if __name__ == "__main__":
     # Setup the command line arguments
@@ -185,17 +195,12 @@ if __name__ == "__main__":
                         help='Destination folder to upload.')
 
     parser.add_argument('filters', nargs='*',
-                        help="filter files of type '[a-A]__[folder_name].txt'")
+                        help="filter files of type '[a-A]__[folder_name].txt' or '[a-A]__[folder_name]_[a-A].txt'")
    
     parser.add_argument('-d','--dryrun',
                         action='store_true',
                         default=False,
                         help='Enable dryrun. Default: %(default)s.')
-
-    parser.add_argument('-n','--vpn',
-                        type=str,
-                        default=vpn,
-                        help='Use named VPN configuration. Default: %(default)s.')
 
     parser.add_argument('-i','--identity',
                         type=str,
@@ -224,4 +229,4 @@ if __name__ == "__main__":
     for data in args.filters:
         assert os.path.isfile(data), "Filter file {0} not found".format(data)
         
-    sys.exit(main(args.source, args.destination, args.filters, args.vpn, args.identity, args.servername, args.dryrun))
+    sys.exit(main(args.source, args.destination, args.filters, args.identity, args.servername, args.dryrun))
