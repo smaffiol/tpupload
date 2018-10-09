@@ -1,2 +1,3 @@
 # tpupload
-Utilities for uploading files for the TumorProfiler project
+Utility to upload collection of data on remote server.
+Tuned for the TumorProfiler project.
