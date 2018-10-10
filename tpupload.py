@@ -68,6 +68,7 @@ log.propagate = True
 dryrun=0
 ssh_identity="~/.ssh/id_rsa"
 tp_server_name="leomed"
+RSYNC_COMMAND="rsync -rt --copy-links -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' --progress {source}/ {server}:{destination}"
 
 # Utility methods
 
@@ -167,17 +168,14 @@ def main(source, destination, filters, ssh_identity, tp_server_name, dryrun):
 
     dir_location,checksum_file = generate_rsync_list(files_to_upload)
 
+    cmd = RSYNC_COMMAND.format(source=dir_location,
+                               server=tp_server_name,
+                               destination=destination)
     if dryrun:
-        log.info("DBG: rsync -rt --copy-links -e 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' --progress {0}/ {1}:{2}.".format(dir_location,
-                                                                                                                                                    tp_server_name,
-                                                                                                                                                    destination))
+        log.info("DBG: {0}".format(cmd))
     else:
         try:
-            sh.rsync("-rt","--copy-links","-e","ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
-                     "--progress",
-                     "{0}/".format(dir_location),
-                     "{0}:{1}".format(tp_server_name,destination)
-            )
+            os.system(cmd)
         except sh.ErrorReturnCode as ex:
             log.error("Failed running rsync. Error {0}".format(ex))
     
